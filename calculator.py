@@ -114,34 +114,48 @@ def calculate_potion_effect(level, recommendations, data_levels, debug=False):
 
 
 def optimize_potion_usage(current_level, current_exp, target_level, potions, data_levels, data_dailys, burning=False, debug=False):
-    potion_usage = {potion['type']: [] for potion in potions}
+    """
+    Calculate the optimal levels to use growth potions for the fastest leveling.
+    """
+    potion_usage = {potion['type']: [] for potion in potions}  # Store optimal levels for each potion type
+    used_levels = set()  # Track levels already used for potion recommendations
 
     if debug:
         print(f"DEBUG: Starting Optimization - Current Level: {current_level}, Current EXP: {current_exp}, Burning: {burning}")
 
-    for potion in potions:
-        for _ in range(potion['quantity']):
+    for potion in potions:  # Iterate over potion types
+        for _ in range(potion['quantity']):  # Use each potion one at a time
             max_time_saved = 0
             optimal_level = None
 
+            # Iterate only over levels reachable in Burning Mode
             level_range = range(current_level, target_level, 3 if burning else 1)
 
             for level in level_range:
+                if level in used_levels:  # Skip already-used levels
+                    continue
+
+                # Calculate time to complete the current level without potions
                 exp_needed = data_levels[data_levels['Level'] == level]['Total_EXP'].sum()
                 daily_exp_gain = data_dailys[data_dailys['Level_Unlocked'] <= level]['EXP_Reward'].sum()
                 mp_exp = data_dailys[(data_dailys['Level_Unlocked'] <= level) & (data_dailys['MP'].notna())]['MP'].max()
                 daily_exp_gain += mp_exp if mp_exp is not None else 0
 
+                if burning:
+                    daily_exp_gain *= 3  # Adjust for Burning Mode
+
                 days_without_potion = exp_needed / daily_exp_gain
 
+                # Simulate potion use
                 if level < potion['level_cap']:
-                    potion_exp = exp_needed
+                    potion_exp = exp_needed  # 100% of the level's EXP
                 else:
-                    potion_exp = potion['flat_rate']
+                    potion_exp = potion['flat_rate']  # Flat rate for capped levels
 
                 remaining_exp = max(0, exp_needed - potion_exp)
                 days_with_potion = remaining_exp / daily_exp_gain
 
+                # Calculate time saved
                 time_saved = days_without_potion - days_with_potion
 
                 if debug:
@@ -151,8 +165,12 @@ def optimize_potion_usage(current_level, current_exp, target_level, potions, dat
                     max_time_saved = time_saved
                     optimal_level = level
 
+            # Apply the potion to the optimal level
             if optimal_level is not None:
                 potion_usage[potion['type']].append(optimal_level)
+                used_levels.add(optimal_level)  # Mark level as used
+                current_level = optimal_level + (3 if burning else 1)  # Advance level based on Burning Mode
+                current_exp = 0  # Reset EXP after leveling up
 
     if debug:
         print(f"DEBUG: Final Potion Usage Recommendations: {potion_usage}")
