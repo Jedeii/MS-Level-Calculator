@@ -9,16 +9,28 @@ def calculate_progress_dynamic(
     target_level=260,
     recommendations=None,
     include_mp=True,
+    mp_runs=1,
     debug=False
 ):
     total_exp_needed = 0
     total_days = 0
     current_exp_at_level = current_exp
+    total_cost_nx = 0  # Track total NX cost for MP runs
 
     if debug:
-        print(f"DEBUG: Starting Calculation - Current Level: {current_level}, Current EXP: {current_exp}, Burning: {burning}, Include MP: {include_mp}")
+        print(f"DEBUG: Starting Calculation - Current Level: {current_level}, Current EXP: {current_exp}, Burning: {burning}, Include MP: {include_mp}, MP Runs: {mp_runs}")
 
     while current_level < target_level:
+        # Check if there's a recommended potion for this level
+        potion_exp = calculate_potion_effect(current_level, recommendations, data_levels, debug=debug)
+
+        # If a potion is used, skip the calculation for this level
+        if potion_exp > 0:
+            current_exp_at_level = max(0, current_exp_at_level - potion_exp)
+            if current_exp_at_level == 0:
+                current_level += 1 if not burning else 3
+            continue
+
         if burning:
             block_exp_needed = 0
             block_daily_exp = 0
@@ -28,16 +40,16 @@ def calculate_progress_dynamic(
                     break
                 block_exp_needed += data_levels[data_levels['Level'] == next_level]['Total_EXP'].sum()
                 block_daily_exp += data_dailys[data_dailys['Level_Unlocked'] <= next_level]['EXP_Reward'].sum()
-                if include_mp:
-                    mp_exp = data_dailys[(data_dailys['Level_Unlocked'] <= next_level) & (data_dailys['MP'].notna())]['MP'].max()
-                    block_daily_exp += mp_exp if mp_exp is not None else 0
 
-                # Apply potions if recommended
-                if recommendations and next_level in recommendations.get("TyGP", []) + recommendations.get("MGP", []) + recommendations.get("TGP", []):
-                    potion_exp = calculate_potion_effect(next_level, recommendations, data_levels, debug)
-                    block_exp_needed -= potion_exp
-                    if block_exp_needed < 0:
-                        block_exp_needed = 0
+                if include_mp:
+                    mp_exp = data_dailys[
+                        (data_dailys['Level_Unlocked'] <= next_level) & 
+                        (data_dailys['MP'].notna())
+                    ]['MP'].max()
+                    if mp_exp is not None:
+                        block_daily_exp += mp_exp * mp_runs
+                        if mp_runs > 1:
+                            total_cost_nx += (mp_runs - 1) * 600  # Each additional run costs 600 NX
 
             if block_daily_exp > 0:
                 days_for_block = block_exp_needed / block_daily_exp
@@ -49,6 +61,7 @@ def calculate_progress_dynamic(
                 print(f"  - Total EXP Needed: {block_exp_needed}")
                 print(f"  - Total Daily EXP Gain: {block_daily_exp}")
                 print(f"  - Days for Block: {days_for_block:.2f}")
+                print(f"  - Total NX Cost: {total_cost_nx} NX")
 
             total_days += days_for_block
             total_exp_needed += block_exp_needed
@@ -57,16 +70,16 @@ def calculate_progress_dynamic(
             level_exp = data_levels[data_levels['Level'] == current_level]['Total_EXP'].sum()
             exp_needed_for_level = level_exp - current_exp_at_level
             daily_exp_gain = data_dailys[data_dailys['Level_Unlocked'] <= current_level]['EXP_Reward'].sum()
-            if include_mp:
-                mp_exp = data_dailys[(data_dailys['Level_Unlocked'] <= current_level) & (data_dailys['MP'].notna())]['MP'].max()
-                daily_exp_gain += mp_exp if mp_exp is not None else 0
 
-            # Apply potions if recommended
-            if recommendations and current_level in recommendations.get("TyGP", []) + recommendations.get("MGP", []) + recommendations.get("TGP", []):
-                potion_exp = calculate_potion_effect(current_level, recommendations, data_levels, debug)
-                exp_needed_for_level -= potion_exp
-                if exp_needed_for_level < 0:
-                    exp_needed_for_level = 0
+            if include_mp:
+                mp_exp = data_dailys[
+                    (data_dailys['Level_Unlocked'] <= current_level) & 
+                    (data_dailys['MP'].notna())
+                ]['MP'].max()
+                if mp_exp is not None:
+                    daily_exp_gain += mp_exp * mp_runs
+                    if mp_runs > 1:
+                        total_cost_nx += (mp_runs - 1) * 600  # Each additional run costs 600 NX
 
             if daily_exp_gain > 0:
                 days_for_level = exp_needed_for_level / daily_exp_gain
@@ -75,6 +88,7 @@ def calculate_progress_dynamic(
 
             if debug:
                 print(f"DEBUG: Level {current_level} - Total EXP: {level_exp}, Remaining EXP: {exp_needed_for_level}, Daily EXP Gain: {daily_exp_gain}, Days: {days_for_level:.2f}")
+                print(f"DEBUG: Total NX Cost: {total_cost_nx} NX")
 
             total_days += days_for_level
             total_exp_needed += exp_needed_for_level
@@ -84,8 +98,11 @@ def calculate_progress_dynamic(
 
     return {
         "Total_EXP_Needed": total_exp_needed,
-        "Total_Days": round(total_days, 2)
+        "Total_Days": round(total_days, 2),
+        "Total_Cost_NX": total_cost_nx
     }
+
+
 
 
 def calculate_potion_effect(level, recommendations, data_levels, debug=False):
@@ -93,6 +110,9 @@ def calculate_potion_effect(level, recommendations, data_levels, debug=False):
     Calculate the EXP provided by a potion for a given level.
     """
     potion_exp = 0
+    if recommendations is None:
+        return potion_exp  # No recommendations provided, skip calculation
+
     if level in recommendations.get("TyGP", []) and level < 240:
         potion_exp = data_levels[data_levels['Level'] == level]['Total_EXP'].sum()
     elif level in recommendations.get("MGP", []) and level < 250:
